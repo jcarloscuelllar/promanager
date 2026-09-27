@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Control de Manzanas y Viviendas</title>
+  
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <!-- Librería toGeoJSON para procesar KML -->
+  <script src="https://unpkg.com/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
+
+  <style>
+    :root {
+      --cd-color: #757575;
+      --na-color: #ff9800;
+      --nd-color: #fbc02d;
+      --co-color: #0288d1;
+      --ni-color: #8e24aa;
+      --pr-color: #2e7d32;
+      --primary: #1a73e8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    
+    /* Corrección de altura completa para móviles */
+    html, body { height: 100%; width: 100%; overflow: hidden; background: #f8fafc; }
+
+    header {
+      height: 50px; background: #0f172a; color: white; padding: 0 15px;
+      display: flex; justify-content: space-between; align-items: center; z-index: 1000; flex-shrink: 0;
+    }
+    .badge-mza { background: #64748b; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
+    .badge-mza.active { background: #22c55e; }
+
+    /* Layout principal flexible para evitar bloqueos de scroll */
+    .app-container {
+      display: flex; flex-direction: column; height: calc(100dvh - 50px); width: 100%; overflow: hidden;
+    }
+
+    /* Mapa de tamaño fijo adaptable */
+    #map { height: 42vh; width: 100%; flex-shrink: 0; position: relative; z-index: 1; }
+    
+    /* Panel contenedor de tabla con flex-1 y scroll habilitado */
+    .panel-viviendas {
+      flex: 1; display: flex; flex-direction: column; background: white;
+      border-top: 2px solid #cbd5e1; overflow: hidden; min-height: 0;
+    }
+
+    .panel-bar {
+      padding: 8px 12px; background: #f1f5f9; border-bottom: 1px solid #cbd5e1;
+      display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-shrink: 0;
+    }
+
+    .btn-action {
+      background: var(--primary); color: white; border: none; padding: 8px 12px;
+      border-radius: 6px; font-weight: bold; font-size: 0.8rem; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 4px; text-decoration: none;
+    }
+    .btn-action.kml { background: #8e24aa; }
+    .btn-action.add { background: #16a34a; font-size: 0.85rem; }
+    .btn-action:disabled { background: #94a3b8; cursor: not-allowed; }
+
+    /* CORRECCIÓN DE SCROLL: Contenedor con overflow-y auto estricto */
+    .table-wrapper {
+      flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; min-height: 0;
+    }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th { background: #f8fafc; color: #475569; text-align: left; padding: 10px 8px; position: sticky; top: 0; border-bottom: 1px solid #e2e8f0; z-index: 2; }
+    td { padding: 8px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+
+    .btn-reorder { border: none; background: #e2e8f0; border-radius: 3px; padding: 3px 6px; cursor: pointer; font-size: 0.75rem; margin: 0 1px; }
+    .badge-status { display: inline-block; padding: 3px 6px; border-radius: 4px; color: white; font-weight: bold; font-size: 0.7rem; text-align: center; }
+
+    /* Pin circular en Mapa */
+    .custom-house-pin {
+      width: 26px; height: 26px; border-radius: 50%; border: 2px solid white;
+      display: flex; align-items: center; justify-content: center;
+      color: white; font-weight: bold; font-size: 11px; box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+    }
+
+    /* Modal Modal */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.6); z-index: 2000; display: none;
+      justify-content: center; align-items: flex-end;
+    }
+    .modal-content {
+      background: white; width: 100%; max-width: 500px; max-height: 85vh;
+      border-top-left-radius: 16px; border-top-right-radius: 16px; padding: 16px; overflow-y: auto;
+    }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .close-btn { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #64748b; }
+
+    .location-picker-box {
+      background: #f0fdf4; border: 1px dashed #22c55e; border-radius: 6px; padding: 8px;
+      display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;
+    }
+
+    .status-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+    .status-btn {
+      padding: 8px 2px; border: 2px solid #e2e8f0; border-radius: 6px; background: white;
+      text-align: center; font-size: 0.72rem; font-weight: bold; cursor: pointer;
+    }
+    .status-btn.selected { color: white; }
+    .status-btn[data-status="CD"].selected { background: var(--cd-color); border-color: var(--cd-color); }
+    .status-btn[data-status="NA"].selected { background: var(--na-color); border-color: var(--na-color); }
+    .status-btn[data-status="ND"].selected { background: var(--nd-color); border-color: var(--nd-color); }
+    .status-btn[data-status="CO"].selected { background: var(--co-color); border-color: var(--co-color); }
+    .status-btn[data-status="NI"].selected { background: var(--ni-color); border-color: var(--ni-color); }
+    .status-btn[data-status="PR"].selected { background: var(--pr-color); border-color: var(--pr-color); }
+
+    .form-group { margin-bottom: 10px; }
+    .form-group label { display: block; font-size: 0.75rem; font-weight: 600; color: #334155; margin-bottom: 3px; }
+    .form-control { width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.85rem; }
+    .hidden { display: none; }
+
+    .summary-card { background: #f8fafc; border-left: 4px solid var(--primary); padding: 8px; margin-top: 8px; font-size: 0.8rem; }
+    .summary-price { font-size: 0.95rem; font-weight: bold; color: #0f172a; }
+
+    .btn-save { width: 100%; background: var(--primary); color: white; border: none; padding: 10px; border-radius: 6px; font-weight: bold; margin-top: 10px; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span style="font-size:0.85rem;">Manzana:</span>
+      <span id="badgeMza" class="badge-mza">Seleccione en KML</span>
+    </div>
+    <div style="font-size: 0.8rem;">
+      Registros: <b id="totalViviendas">0</b>
+    </div>
+  </header>
+
+  <div class="app-container">
+    <!-- Mapa Leaflet -->
+    <div id="map"></div>
+
+    <!-- Panel de Viviendas -->
+    <div class="panel-viviendas">
+      <div class="panel-bar">
+        <label for="kmlFileInput" class="btn-action kml">
+          📂 Subir KML
+        </label>
+        <input type="file" id="kmlFileInput" accept=".kml" style="display:none;" onchange="procesarArchivoKML(event)" />
+
+        <button class="btn-action add" id="btnAddVivienda" onclick="iniciarNuevaVivienda()" disabled>
+          ➕ Agregar Vivienda
+        </button>
+      </div>
+
+      <!-- Tabla de Viviendas con Scroll independiente -->
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 35px;">#</th>
+              <th>Dirección / Referencia</th>
+              <th>Estatus</th>
+              <th>Detalle</th>
+              <th style="text-align: right; width: 90px;">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="viviendasTableBody">
+            <tr>
+              <td colspan="5" style="text-align: center; color: #94a3b8; padding: 30px 10px;">
+                Cargue un archivo KML y toque una manzana para enfocar e iniciar el registro.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Captura/Clasificación -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 style="font-size: 1rem; color: #0f172a;" id="modalTitle">Registro de Vivienda</h3>
+        <button class="close-btn" onclick="cerrarModal()">&times;</button>
+      </div>
+
+      <form id="viviendaForm" onsubmit="guardarVivienda(event)">
+        <!-- Asignación Opcional de Ubicación GPS/Mapa -->
+        <div class="location-picker-box">
+          <div style="font-size: 0.75rem;">
+            <b>Ubicación:</b> <span id="locationStatusText" style="color:#64748b;">Centro de Manzana (Default)</span>
+          </div>
+          <button type="button" class="btn-action" style="background:#0288d1; font-size:0.7rem; padding:4px 8px;" onclick="capturarGPSActual()">
+            📍 GPS
+          </button>
+        </div>
+
+        <div class="form-group">
+          <label>Dirección / NÚM. Exterior / Referencia</label>
+          <input type="text" id="direccionInput" class="form-control" placeholder="Ej. Casa Blanca #102 o Portón Negro" required>
+        </div>
+
+        <div class="form-group">
+          <label>Resultado de Visita (Estatus)</label>
+          <div class="status-grid">
+            <button type="button" class="status-btn" data-status="CD" onclick="seleccionarEstatus('CD')">Deshabitada (CD)</button>
+            <button type="button" class="status-btn" data-status="NA" onclick="seleccionarEstatus('NA')">No Abrió (NA)</button>
+            <button type="button" class="status-btn" data-status="ND" onclick="seleccionarEstatus('ND')">No Decisor (ND)</button>
+            <button type="button" class="status-btn" data-status="CO" onclick="seleccionarEstatus('CO')">Competencia (CO)</button>
+            <button type="button" class="status-btn" data-status="NI" onclick="seleccionarEstatus('NI')">No Interesó (NI)</button>
+            <button type="button" class="status-btn" data-status="PR" onclick="seleccionarEstatus('PR')">Prospecto (PR)</button>
+          </div>
+        </div>
+
+        <!-- Competencia -->
+        <div class="form-group hidden" id="groupCompetencia">
+          <label>Proveedor Actual</label>
+          <select id="proveedorActual" class="form-control">
+            <option value="Sin servicio">Sin servicio</option>
+            <option value="Telmex">Telmex</option>
+            <option value="Izzi">Izzi</option>
+            <option value="Totalplay">Totalplay</option>
+            <option value="Megacable">Megacable</option>
+            <option value="Otro">Otro</option>
+          </select>
+        </div>
+
+        <!-- Prospecto -->
+        <div id="groupProspecto" class="hidden">
+          <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
+          <h4 style="color: var(--pr-color); font-size: 0.85rem; margin-bottom: 8px;">Datos de Venta / Prospecto</h4>
+
+          <div class="form-group">
+            <label>Nombre del Cliente</label>
+            <input type="text" id="nombreCliente" class="form-control" placeholder="Nombre completo">
+          </div>
+
+          <div class="form-group">
+            <label>Teléfono</label>
+            <input type="tel" id="telefonoCliente" class="form-control" placeholder="10 dígitos">
+          </div>
+
+          <div class="form-group">
+            <label>Tipo Paquete</label>
+            <select id="tipoPaquete" class="form-control" onchange="actualizarCotizador()">
+              <option value="doble">Doble Play (Internet + Tel)</option>
+              <option value="triple">Triple Play (TV + Internet + Tel)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Velocidad</label>
+            <select id="velocidadPaquete" class="form-control" onchange="actualizarCotizador()">
+              <option value="200">200 Megas</option>
+              <option value="300">300 Megas</option>
+              <option value="500">500 Megas</option>
+              <option value="1000">1000 Megas</option>
+            </select>
+          </div>
+
+          <div class="summary-card">
+            <div>Mensualidad: <span class="summary-price" id="resumenPrecio">$350/mes</span></div>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-save">Guardar Registro</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    const TARIFAS = {
+      doble: { 200: 350, 300: 450, 500: 650, 1000: 850 },
+      triple: { 200: 500, 300: 600, 500: 800, 1000: 1000 }
+    };
+
+    const COLORES_ESTATUS = {
+      PENDIENTE: '#64748b', CD: '#757575', NA: '#ff9800',
+      ND: '#fbc02d', CO: '#0288d1', NI: '#8e24aa', PR: '#2e7d32'
+    };
+
+    let map;
+    let capaKmlActual = null;
+    let manzanaSeleccionadaLayer = null;
+    let nombreManzanaActiva = null;
+    let centroManzanaCoords = null;
+
+    let viviendas = []; // Lista general
+    let markersMap = {};
+    let estatusSeleccionado = 'PENDIENTE';
+    let viviendaEditandoId = null;
+    let tempCoordsModal = null;
+
+    window.onload = () => { initMap(); };
+
+    function initMap() {
+      map = L.map('map').setView([22.2808, -97.8606], 15);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+      }).addTo(map);
+    }
+
+    // PROCESAR KML
+    function procesarArchivoKML(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const dom = new DOMParser().parseFromString(e.target.result, 'text/xml');
+          const geojsonData = toGeoJSON.kml(dom);
+
+          if (!geojsonData.features || geojsonData.features.length === 0) {
+            alert("El KML no contiene polígonos válidos.");
+            return;
+          }
+
+          if (capaKmlActual) map.removeLayer(capaKmlActual);
+
+          let contador = 0;
+          capaKmlActual = L.geoJSON(geojsonData, {
+            style: { color: '#1a73e8', weight: 2, fillColor: '#60a5fa', fillOpacity: 0.25 },
+            onEachFeature: (feature, layer) => {
+              contador++;
+              const nombre = feature.properties.name || `Manzana ${contador}`;
+
+              // AL HACER CLIC EN UNA MANZANA
+              layer.on('click', (e) => {
+                L.DomEvent.stopPropagation(e);
+                seleccionarManzana(layer, nombre);
+              });
+            }
+          }).addTo(map);
+
+          map.fitBounds(capaKmlActual.getBounds());
+          alert(`KML cargado. Se encontraron ${contador} manzanas. Haz clic en una manzana para enfocarla.`);
+
+        } catch (err) {
+          alert("Error al leer el archivo KML.");
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    // ENFOCAR Y SELECCIONAR MANZANA
+    function seleccionarManzana(layer, nombre) {
+      if (manzanaSeleccionadaLayer) {
+        manzanaSeleccionadaLayer.setStyle({ color: '#1a73e8', fillColor: '#60a5fa', fillOpacity: 0.25, weight: 2 });
+      }
+
+      manzanaSeleccionadaLayer = layer;
+      nombreManzanaActiva = nombre;
+
+      // Resaltar en verde la manzana seleccionada
+      layer.setStyle({ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.4, weight: 4 });
+
+      // ENFOQUE / ZOOM AUTOMÁTICO EXCLUSIVO A LA MANZANA SELECCIONADA
+      const bounds = layer.getBounds();
+      map.fitBounds(bounds, { padding: [30, 30] });
+      centroManzanaCoords = bounds.getCenter();
+
+      // Actualizar UI
+      const badge = document.getElementById('badgeMza');
+      badge.textContent = nombre;
+      badge.classList.add('active');
+      document.getElementById('btnAddVivienda').disabled = false;
+
+      renderAll();
+    }
+
+    // FLUJO DE CREACIÓN DE VIVIENDA
+    function iniciarNuevaVivienda() {
+      viviendaEditandoId = null;
+      tempCoordsModal = { lat: centroManzanaCoords.lat, lng: centroManzanaCoords.lng };
+
+      const numSiguiente = getViviendasManzanaActual().length + 1;
+
+      document.getElementById('modalTitle').textContent = `Nueva Vivienda #${numSiguiente} (${nombreManzanaActiva})`;
+      document.getElementById('direccionInput').value = `Casa #${numSiguiente}`;
+      document.getElementById('locationStatusText').textContent = "Centro de Manzana (Default)";
+      document.getElementById('locationStatusText').style.color = "#64748b";
+
+      seleccionarEstatus('CD');
+      document.getElementById('modalOverlay').style.display = 'flex';
+    }
+
+    function capturarGPSActual() {
+      if (!navigator.geolocation) {
+        alert("GPS no soportado");
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          tempCoordsModal = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          document.getElementById('locationStatusText').textContent = "📍 Ubicación GPS Fijada";
+          document.getElementById('locationStatusText').style.color = "#0288d1";
+        },
+        err => alert("No se pudo obtener la ubicación GPS."),
+        { enableHighAccuracy: true }
+      );
+    }
+
+    function guardarVivienda(e) {
+      e.preventDefault();
+
+      if (viviendaEditandoId) {
+        // Modo Edición
+        const viv = viviendas.find(v => v.id === viviendaEditandoId);
+        if (viv) {
+          viv.direccion = document.getElementById('direccionInput').value;
+          viv.estatus = estatusSeleccionado;
+          viv.proveedorActual = document.getElementById('proveedorActual').value;
+          if (tempCoordsModal) {
+            viv.lat = tempCoordsModal.lat;
+            viv.lng = tempCoordsModal.lng;
+          }
+          if (estatusSeleccionado === 'PR') {
+            const t = document.getElementById('tipoPaquete').value;
+            const v = document.getElementById('velocidadPaquete').value;
+            viv.prospecto = { nombre: document.getElementById('nombreCliente').value, telefono: document.getElementById('telefonoCliente').value, tipoPaquete: t, velocidad: v };
+          } else { viv.prospecto = null; }
+        }
+      } else {
+        // Modo Nuevo Registro
+        const viviendasManzana = getViviendasManzanaActual();
+        const nuevaViv = {
+          id: "viv_" + Date.now(),
+          manzana: nombreManzanaActiva,
+          orden: viviendasManzana.length + 1,
+          lat: tempCoordsModal.lat,
+          lng: tempCoordsModal.lng,
+          direccion: document.getElementById('direccionInput').value,
+          estatus: estatusSeleccionado,
+          proveedorActual: document.getElementById('proveedorActual').value,
+          prospecto: estatusSeleccionado === 'PR' ? {
+            nombre: document.getElementById('nombreCliente').value,
+            telefono: document.getElementById('telefonoCliente').value,
+            tipoPaquete: document.getElementById('tipoPaquete').value,
+            velocidad: document.getElementById('velocidadPaquete').value
+          } : null
+        };
+        viviendas.push(nuevaViv);
+      }
+
+      renderAll();
+      cerrarModal();
+    }
+
+    function getViviendasManzanaActual() {
+      return viviendas.filter(v => v.manzana === nombreManzanaActiva);
+    }
+
+    // RENDERIZAR TABLA Y MAPA
+    function renderAll() {
+      const listaManzana = getViviendasManzanaActual();
+      document.getElementById('totalViviendas').textContent = listaManzana.length;
+
+      renderPines(listaManzana);
+      renderTabla(listaManzana);
+    }
+
+    function renderPines(lista) {
+      Object.keys(markersMap).forEach(k => map.removeLayer(markersMap[k]));
+      markersMap = {};
+
+      lista.forEach((viv, index) => {
+        viv.orden = index + 1;
+        const color = COLORES_ESTATUS[viv.estatus] || COLORES_ESTATUS.PENDIENTE;
+        
+        const icon = L.divIcon({
+          className: 'custom-pin-wrapper',
+          html: `<div class="custom-house-pin" style="background-color: ${color}">${viv.orden}</div>`
+        });
+
+        const marker = L.marker([viv.lat, viv.lng], { icon, draggable: true }).addTo(map);
+
+        marker.on('dragend', (e) => {
+          const pos = e.target.getLatLng();
+          viv.lat = pos.lat;
+          viv.lng = pos.lng;
+        });
+
+        marker.on('click', () => abrirEdicion(viv.id));
+        markersMap[viv.id] = marker;
+      });
+    }
+
+    function renderTabla(lista) {
+      const tbody = document.getElementById('viviendasTableBody');
+      tbody.innerHTML = '';
+
+      if (lista.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 20px;">Sin casas registradas en ${nombreManzanaActiva}. Presione "➕ Agregar Vivienda".</td></tr>`;
+        return;
+      }
+
+      lista.forEach((viv, index) => {
+        viv.orden = index + 1;
+        const tr = document.createElement('tr');
+
+        let detalleText = viv.estatus;
+        if (viv.estatus === 'PR' && viv.prospecto) {
+          detalleText = `${viv.prospecto.nombre} (${viv.prospecto.velocidad}M)`;
+        } else if (viv.estatus === 'CO') {
+          detalleText = `${viv.proveedorActual}`;
+        }
+
+        const colorBg = COLORES_ESTATUS[viv.estatus] || COLORES_ESTATUS.PENDIENTE;
+
+        tr.innerHTML = `
+          <td><b>#${viv.orden}</b></td>
+          <td>${viv.direccion}</td>
+          <td><span class="badge-status" style="background:${colorBg}">${viv.estatus}</span></td>
+          <td style="font-size:0.75rem; color:#475569;">${detalleText}</td>
+          <td style="text-align: right;">
+            <button class="btn-reorder" onclick="moverPosicion('${viv.id}', -1)">▲</button>
+            <button class="btn-reorder" onclick="moverPosicion('${viv.id}', 1)">▼</button>
+            <button style="border:none; background:#1a73e8; color:white; padding:3px 5px; border-radius:3px; cursor:pointer;" onclick="abrirEdicion('${viv.id}')">✏️</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function moverPosicion(id, dir) {
+      const lista = getViviendasManzanaActual();
+      const idx = lista.findIndex(v => v.id === id);
+      if (idx < 0) return;
+
+      const targetIdx = idx + dir;
+      if (targetIdx >= 0 && targetIdx < lista.length) {
+        const item = lista[idx];
+        lista.splice(idx, 1);
+        lista.splice(targetIdx, 0, item);
+
+        // Reordenar en lista global
+        viviendas = viviendas.filter(v => v.manzana !== nombreManzanaActiva).concat(lista);
+        renderAll();
+      }
+    }
+
+    function abrirEdicion(id) {
+      const viv = viviendas.find(v => v.id === id);
+      if (!viv) return;
+
+      viviendaEditandoId = id;
+      tempCoordsModal = { lat: viv.lat, lng: viv.lng };
+
+      document.getElementById('modalTitle').textContent = `Editar Vivienda #${viv.orden}`;
+      document.getElementById('direccionInput').value = viv.direccion;
+      document.getElementById('locationStatusText').textContent = "📍 Ubicación Asignada";
+      document.getElementById('locationStatusText').style.color = "#16a34a";
+
+      seleccionarEstatus(viv.estatus);
+
+      if (viv.prospecto) {
+        document.getElementById('nombreCliente').value = viv.prospecto.nombre || '';
+        document.getElementById('telefonoCliente').value = viv.prospecto.telefono || '';
+        document.getElementById('tipoPaquete').value = viv.prospecto.tipoPaquete || 'doble';
+        document.getElementById('velocidadPaquete').value = viv.prospecto.velocidad || '200';
+      }
+
+      actualizarCotizador();
+      document.getElementById('modalOverlay').style.display = 'flex';
+    }
+
+    function cerrarModal() {
+      document.getElementById('modalOverlay').style.display = 'none';
+    }
+
+    function seleccionarEstatus(estatus) {
+      estatusSeleccionado = estatus;
+      document.querySelectorAll('.status-btn').forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.status === estatus);
+      });
+
+      document.getElementById('groupCompetencia').classList.toggle('hidden', !(estatus === 'CO' || estatus === 'PR'));
+      document.getElementById('groupProspecto').classList.toggle('hidden', estatus !== 'PR');
+    }
+
+    function actualizarCotizador() {
+      const t = document.getElementById('tipoPaquete').value;
+      const v = document.getElementById('velocidadPaquete').value;
+      document.getElementById('resumenPrecio').textContent = `$${TARIFAS[t][v]}/mes`;
+    }
+  </script>
+</body>
+</html>
