@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Prospectador de Campo - Fibra Óptica</title>
+  
+  <!-- Leaflet CSS (Mapas gratuitos) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    :root {
+      --cd-color: #757575; /* Casa Deshabitada - Gris */
+      --na-color: #ff9800; /* No Abrió - Naranja */
+      --nd-color: #fbc02d; /* No Estuvo Decisor - Amarillo */
+      --co-color: #0288d1; /* Competencia - Azul */
+      --ni-color: #8e24aa; /* No Interesó - Morado */
+      --pr-color: #2e7d32; /* Prospecto - Verde */
+      --primary: #1a73e8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body, html { height: 100%; width: 100%; overflow: hidden; display: flex; flex-direction: column; }
+
+    /* Barra Superior */
+    header {
+      background: #111827;
+      color: white;
+      padding: 10px 15px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 1000;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    }
+    .stats-container { display: flex; gap: 10px; font-size: 0.85rem; }
+    .stat-badge { background: #374151; padding: 4px 8px; border-radius: 6px; font-weight: bold; }
+    .stat-badge.green { background: var(--pr-color); }
+
+    .btn-export {
+      background: #10b981; color: white; border: none; padding: 6px 12px;
+      border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 0.85rem;
+    }
+
+    /* Contenedor del Mapa */
+    #map-container { flex: 1; width: 100%; position: relative; }
+    #map { width: 100%; height: 100%; z-index: 1; }
+
+    /* Botón Flotante GPS */
+    .btn-gps-float {
+      position: absolute; bottom: 25px; right: 15px; z-index: 1000;
+      background: #ffffff; color: #111827; border: 2px solid #1a73e8;
+      padding: 12px 16px; border-radius: 30px; font-weight: bold; font-size: 0.9rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3); cursor: pointer; display: flex;
+      align-items: center; gap: 6px; transition: transform 0.1s;
+    }
+    .btn-gps-float:active { transform: scale(0.95); }
+
+    /* Modal / Formulario */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.6); z-index: 2000; display: none;
+      justify-content: center; align-items: flex-end;
+    }
+    .modal-content {
+      background: white; width: 100%; max-width: 500px; max-height: 90vh;
+      border-top-left-radius: 16px; border-top-right-radius: 16px;
+      padding: 20px; overflow-y: auto; box-shadow: 0 -4px 10px rgba(0,0,0,0.2);
+    }
+
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .modal-title { font-size: 1.1rem; font-weight: bold; color: #1f2937; }
+    .close-btn { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #6b7280; }
+
+    /* Opciones de Estatus (Grid) */
+    .status-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 15px; }
+    .status-btn {
+      padding: 8px 4px; border: 2px solid #e5e7eb; border-radius: 8px; background: white;
+      text-align: center; font-size: 0.75rem; font-weight: bold; cursor: pointer; transition: all 0.2s;
+    }
+    .status-btn input { display: none; }
+    .status-btn.selected { border-color: currentColor; color: white; }
+
+    .status-btn[data-status="CD"].selected { background: var(--cd-color); }
+    .status-btn[data-status="NA"].selected { background: var(--na-color); }
+    .status-btn[data-status="ND"].selected { background: var(--nd-color); }
+    .status-btn[data-status="CO"].selected { background: var(--co-color); }
+    .status-btn[data-status="NI"].selected { background: var(--ni-color); }
+    .status-btn[data-status="PR"].selected { background: var(--pr-color); }
+
+    /* Form Grupos */
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 0.8rem; font-weight: 600; color: #374151; margin-bottom: 4px; }
+    .form-control { width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem; }
+
+    .hidden { display: none; }
+
+    /* Resumen de Tarifa */
+    .summary-card {
+      background: #f3f4f6; border-left: 4px solid var(--primary); padding: 10px;
+      border-radius: 4px; margin-top: 10px; font-size: 0.85rem;
+    }
+    .summary-price { font-size: 1.1rem; font-weight: bold; color: #111827; }
+    .summary-deposit { font-weight: bold; color: #b91c1c; margin-top: 4px; }
+
+    .btn-save {
+      width: 100%; background: var(--primary); color: white; border: none; padding: 12px;
+      border-radius: 8px; font-weight: bold; font-size: 1rem; cursor: pointer; margin-top: 15px;
+    }
+
+    /* Estilos de Iconos Personalizados en el Mapa */
+    .custom-pin {
+      width: 26px; height: 26px; border-radius: 50%; border: 2px solid white;
+      display: flex; align-items: center; justify-content: center;
+      color: white; font-size: 10px; font-weight: bold; box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+      cursor: grab;
+    }
+
+    /* Botones de Popup Leaflet */
+    .popup-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .popup-btn {
+      flex: 1; padding: 6px; border: none; border-radius: 4px; font-size: 0.75rem;
+      font-weight: bold; cursor: pointer; color: white; text-align: center;
+    }
+    .popup-btn.edit { background: #1a73e8; }
+    .popup-btn.delete { background: #dc2626; }
+  </style>
+</head>
+<body>
+
+  <!-- Barra de Encabezado -->
+  <header>
+    <div class="stats-container">
+      <div class="stat-badge">Total: <span id="countTotal">0</span></div>
+      <div class="stat-badge green">Prospectos (PR): <span id="countPR">0</span>/4</div>
+    </div>
+    <button class="btn-export" onclick="exportarCSV()">📥 Exportar CSV</button>
+  </header>
+
+  <!-- Contenedor del Mapa con Botón GPS Flotante -->
+  <div id="map-container">
+    <div id="map"></div>
+    <button class="btn-gps-float" onclick="registrarConGPS()">
+      📍 Registrar aquí (GPS)
+    </button>
+  </div>
+
+  <!-- Modal de Captura / Edición -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span class="modal-title" id="modalTitle">Nuevo Registro de Predio</span>
+        <button class="close-btn" onclick="cerrarModal()">&times;</button>
+      </div>
+
+      <form id="predioForm" onsubmit="guardarRegistro(event)">
+        <!-- Dirección -->
+        <div class="form-group">
+          <label>Dirección / Num. Exterior</label>
+          <input type="text" id="direccion" class="form-control" placeholder="Ej. Calle Hidalgo #102" required>
+        </div>
+
+        <!-- Selección de Estatus -->
+        <div class="form-group">
+          <label>Selecciona el Estatus de la Visita</label>
+          <div class="status-grid">
+            <label class="status-btn" data-status="CD">
+              <input type="radio" name="estatus" value="CD" onchange="cambiarEstatus('CD')"> Deshabitada (CD)
+            </label>
+            <label class="status-btn" data-status="NA">
+              <input type="radio" name="estatus" value="NA" onchange="cambiarEstatus('NA')"> No Abrió (NA)
+            </label>
+            <label class="status-btn" data-status="ND">
+              <input type="radio" name="estatus" value="ND" onchange="cambiarEstatus('ND')"> No Decisor (ND)
+            </label>
+            <label class="status-btn" data-status="CO">
+              <input type="radio" name="estatus" value="CO" onchange="cambiarEstatus('CO')"> Competencia (CO)
+            </label>
+            <label class="status-btn" data-status="NI">
+              <input type="radio" name="estatus" value="NI" onchange="cambiarEstatus('NI')"> No Interesó (NI)
+            </label>
+            <label class="status-btn" data-status="PR">
+              <input type="radio" name="estatus" value="PR" onchange="cambiarEstatus('PR')"> Prospecto (PR)
+            </label>
+          </div>
+        </div>
+
+        <!-- Campo Adicional para Competencia (CO / PR) -->
+        <div class="form-group hidden" id="groupCompetencia">
+          <label>Proveedor Actual</label>
+          <select id="proveedorActual" class="form-control">
+            <option value="Ninguno">Sin Servicio Actual</option>
+            <option value="Telmex">Telmex</option>
+            <option value="Izzi">Izzi</option>
+            <option value="Totalplay">Totalplay</option>
+            <option value="Inbtel">Inbtel</option>
+            <option value="Megacable">Megacable (Mega)</option>
+            <option value="Otro">Otro</option>
+          </select>
+        </div>
+
+        <!-- Sección Exclusiva para PROSPECTO (PR) -->
+        <div id="groupProspecto" class="hidden">
+          <hr style="margin: 15px 0; border: 0; border-top: 1px solid #e5e7eb;">
+          <h4 style="margin-bottom: 10px; color: var(--pr-color);">Datos del Prospecto Interesado</h4>
+
+          <div class="form-group">
+            <label>Nombre Completo del Cliente</label>
+            <input type="text" id="nombreCliente" class="form-control" placeholder="Juan Pérez">
+          </div>
+
+          <div class="form-group">
+            <label>Teléfono de Contacto</label>
+            <input type="tel" id="telefonoCliente" class="form-control" placeholder="10 dígitos">
+          </div>
+
+          <div class="form-group">
+            <label>Tipo de Paquete</label>
+            <select id="tipoPaquete" class="form-control" onchange="actualizarCotizacion()">
+              <option value="doble">Doble Play (Internet + Telefonía)</option>
+              <option value="triple">Triple Play (TV + Internet + Telefonía)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Velocidad de Fibra Óptica</label>
+            <select id="velocidadPaquete" class="form-control" onchange="actualizarCotizacion()">
+              <option value="200">200 Megas Simétricos</option>
+              <option value="300">300 Megas Simétricos</option>
+              <option value="500">500 Megas Simétricos</option>
+              <option value="1000">1000 Megas (500 Megas Subida)</option>
+            </select>
+          </div>
+
+          <!-- Opción de Método de Contratación (Solo para 1000 Megas) -->
+          <div class="form-group hidden" id="groupMetodo1000">
+            <label>Método de Pago para Contratación (1000 Mbps)</label>
+            <select id="metodoPago1000" class="form-control" onchange="actualizarCotizacion()">
+              <option value="domiciliado">Domiciliado Tarjeta Crédito/Débito ($200)</option>
+              <option value="efectivo">Pago en Efectivo ($300)</option>
+            </select>
+          </div>
+
+          <!-- Resumen Comercial Dinámico -->
+          <div class="summary-card">
+            <div>Mensualidad: <span class="summary-price" id="resumenPrecio">$350/mes</span></div>
+            <div id="resumenVelocidad" style="color: #4b5563;">Fibra simétrica de alta velocidad</div>
+            <div class="summary-deposit" id="resumenInicial">Anticipo: $100 (Efectivo)</div>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-save" id="btnSubmitForm">Guardar Registro</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    // --- MATRIZ COMERCIAL ---
+    const TARIFAS = {
+      doble: { 200: 350, 300: 450, 500: 650, 1000: 850 },
+      triple: { 200: 500, 300: 600, 500: 800, 1000: 1000 }
+    };
+
+    const COLORES_ESTATUS = {
+      CD: '#757575',
+      NA: '#ff9800',
+      ND: '#fbc02d',
+      CO: '#0288d1',
+      NI: '#8e24aa',
+      PR: '#2e7d32'
+    };
+
+    // --- ESTADO DE LA APLICACIÓN ---
+    let map;
+    let registros = JSON.parse(localStorage.getItem('registros_ventas')) || [];
+    let tempLatLng = null;
+    let markersMap = {};
+    let estatusSeleccionado = null;
+    let editingId = null; // Guardará el ID si estamos editando
+
+    // --- INICIALIZACIÓN ---
+    window.onload = () => {
+      initMap();
+      renderizarRegistrosPrevios();
+      actualizarContadores();
+    };
+
+    function initMap() {
+      // Coordenadas por defecto
+      map = L.map('map').setView([22.28, -97.86], 16);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+      }).addTo(map);
+
+      // Ubicar GPS al cargar
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(position => {
+          const { latitude, longitude } = position.coords;
+          map.setView([latitude, longitude], 18);
+        });
+      }
+
+      // Evento al hacer clic manual en el mapa
+      map.on('click', (e) => {
+        tempLatLng = e.latlng;
+        abrirModalNuevo();
+      });
+    }
+
+    // --- REGISTRO AUTOMÁTICO VÍA GPS ---
+    function registrarConGPS() {
+      if (!navigator.geolocation) {
+        alert("La geolocalización no está disponible en tu navegador.");
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        position => {
+          const { latitude, longitude } = position.coords;
+          tempLatLng = { lat: latitude, lng: longitude };
+          map.setView([latitude, longitude], 18);
+          abrirModalNuevo();
+        },
+        error => {
+          alert("No se pudo obtener tu ubicación actual. Asegúrate de activar el GPS.");
+        },
+        { enableHighAccuracy: true }
+      );
+    }
+
+    // --- CONTROL DE MODAL Y FORMULARIO ---
+    function abrirModalNuevo() {
+      editingId = null;
+      document.getElementById('modalTitle').textContent = "Nuevo Registro de Predio";
+      document.getElementById('btnSubmitForm').textContent = "Guardar Registro";
+      document.getElementById('predioForm').reset();
+      
+      estatusSeleccionado = null;
+      document.querySelectorAll('.status-btn').forEach(btn => btn.classList.remove('selected'));
+      
+      document.getElementById('groupCompetencia').classList.add('hidden');
+      document.getElementById('groupProspecto').classList.add('hidden');
+      
+      actualizarCotizacion();
+      document.getElementById('modalOverlay').style.display = 'flex';
+    }
+
+    function cerrarModal() {
+      document.getElementById('modalOverlay').style.display = 'none';
+    }
+
+    function cambiarEstatus(estatus) {
+      estatusSeleccionado = estatus;
+      
+      document.querySelectorAll('.status-btn').forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.status === estatus);
+      });
+
+      const groupCompetencia = document.getElementById('groupCompetencia');
+      const groupProspecto = document.getElementById('groupProspecto');
+
+      if (estatus === 'CO' || estatus === 'PR') {
+        groupCompetencia.classList.remove('hidden');
+      } else {
+        groupCompetencia.classList.add('hidden');
+      }
+
+      if (estatus === 'PR') {
+        groupProspecto.classList.remove('hidden');
+        document.getElementById('nombreCliente').required = true;
+        document.getElementById('telefonoCliente').required = true;
+      } else {
+        groupProspecto.classList.add('hidden');
+        document.getElementById('nombreCliente').required = false;
+        document.getElementById('telefonoCliente').required = false;
+      }
+    }
+
+    function actualizarCotizacion() {
+      const tipo = document.getElementById('tipoPaquete').value;
+      const velocidad = document.getElementById('velocidadPaquete').value;
+      const groupMetodo1000 = document.getElementById('groupMetodo1000');
+
+      const precio = TARIFAS[tipo][velocidad];
+      document.getElementById('resumenPrecio').textContent = `$${precio}/mes`;
+
+      if (velocidad === "1000") {
+        groupMetodo1000.classList.remove('hidden');
+        document.getElementById('resumenVelocidad').textContent = "1000 Megas Bajada / 500 Megas Subida";
+
+        const metodo = document.getElementById('metodoPago1000').value;
+        if (metodo === 'domiciliado') {
+          document.getElementById('resumenInicial').textContent = "Contratación: $200 (Domiciliado TC/TD)";
+        } else {
+          document.getElementById('resumenInicial').textContent = "Contratación: $300 (Efectivo)";
+        }
+      } else {
+        groupMetodo1000.classList.add('hidden');
+        document.getElementById('resumenVelocidad').textContent = `${velocidad} Megas de Fibra Óptica Simétrica`;
+        document.getElementById('resumenInicial').textContent = "Anticipo: $100 (Efectivo)";
+      }
+    }
+
+    // --- GUARDADO / EDICIÓN ---
+    function guardarRegistro(e) {
+      e.preventDefault();
+
+      if (!estatusSeleccionado) {
+        alert("Por favor selecciona un estatus para la visita.");
+        return;
+      }
+
+      const direccion = document.getElementById('direccion').value;
+      const proveedorActual = document.getElementById('proveedorActual').value;
+
+      let datosProspecto = null;
+
+      if (estatusSeleccionado === 'PR') {
+        const tipo = document.getElementById('tipoPaquete').value;
+        const velocidad = document.getElementById('velocidadPaquete').value;
+        const precio = TARIFAS[tipo][velocidad];
+        
+        let conceptoInicial = "Anticipo $100 Efectivo";
+        if (velocidad === "1000") {
+          const metodo = document.getElementById('metodoPago1000').value;
+          conceptoInicial = metodo === 'domiciliado' 
+            ? "Contratación $200 Domiciliado" 
+            : "Contratación $300 Efectivo";
+        }
+
+        datosProspecto = {
+          nombre: document.getElementById('nombreCliente').value,
+          telefono: document.getElementById('telefonoCliente').value,
+          tipoPaquete: tipo,
+          velocidad: velocidad,
+          precioMensual: precio,
+          conceptoInicial: conceptoInicial
+        };
+      }
+
+      if (editingId) {
+        // MODO EDICIÓN
+        const idx = registros.findIndex(r => r.id === editingId);
+        if (idx !== -1) {
+          registros[idx].direccion = direccion;
+          registros[idx].estatus = estatusSeleccionado;
+          registros[idx].proveedorActual = (estatusSeleccionado === 'CO' || estatusSeleccionado === 'PR') ? proveedorActual : 'N/A';
+          registros[idx].prospecto = datosProspecto;
+
+          // Re-dibujar pin en el mapa
+          if (markersMap[editingId]) map.removeLayer(markersMap[editingId]);
+          dibujarPinEnMapa(registros[idx]);
+        }
+      } else {
+        // MODO NUEVO
+        const nuevoRegistro = {
+          id: "predio_" + Date.now(),
+          lat: tempLatLng.lat,
+          lng: tempLatLng.lng,
+          direccion,
+          estatus: estatusSeleccionado,
+          proveedorActual: (estatusSeleccionado === 'CO' || estatusSeleccionado === 'PR') ? proveedorActual : 'N/A',
+          prospecto: datosProspecto,
+          fecha: new Date().toLocaleString()
+        };
+
+        registros.push(nuevoRegistro);
+        dibujarPinEnMapa(nuevoRegistro);
+      }
+
+      guardarEnLocalStorage();
+      actualizarContadores();
+      cerrarModal();
+    }
+
+    // --- PINES Y MAPA (CON ARRASTRE Y POPUP CON EDICIÓN) ---
+    function dibujarPinEnMapa(reg) {
+      const icon = L.divIcon({
+        className: 'custom-pin-wrapper',
+        html: `<div class="custom-pin" style="background-color: ${COLORES_ESTATUS[reg.estatus]}">${reg.estatus}</div>`
+      });
+
+      // Pin HABILITADO PARA ARRASTRAR (draggable: true)
+      const marker = L.marker([reg.lat, reg.lng], { icon, draggable: true }).addTo(map);
+
+      // Evento al soltar el pin arrastrado
+      marker.on('dragend', function (e) {
+        const newPos = e.target.getLatLng();
+        reg.lat = newPos.lat;
+        reg.lng = newPos.lng;
+        guardarEnLocalStorage();
+      });
+
+      // Contenido del Popup con botones de acción
+      let popupContent = `<b>${reg.direccion}</b><br>Estatus: <b>${reg.estatus}</b>`;
+      if (reg.prospecto) {
+        popupContent += `<br>👤 ${reg.prospecto.nombre}<br>📞 ${reg.prospecto.telefono}<br>📦 ${reg.prospecto.tipoPaquete.toUpperCase()} ${reg.prospecto.velocidad}M ($${reg.prospecto.precioMensual})`;
+      }
+
+      popupContent += `
+        <div class="popup-actions">
+          <button class="popup-btn edit" onclick="editarRegistro('${reg.id}')">✏️ Editar</button>
+          <button class="popup-btn delete" onclick="eliminarRegistro('${reg.id}')">🗑️ Eliminar</button>
+        </div>
+      `;
+
+      marker.bindPopup(popupContent);
+      markersMap[reg.id] = marker;
+    }
+
+    // --- EDICIÓN Y ELIMINACIÓN ---
+    window.editarRegistro = function(id) {
+      const reg = registros.find(r => r.id === id);
+      if (!reg) return;
+
+      editingId = id;
+      tempLatLng = { lat: reg.lat, lng: reg.lng };
+
+      document.getElementById('modalTitle').textContent = "Editar Registro de Predio";
+      document.getElementById('btnSubmitForm').textContent = "Actualizar Registro";
+      
+      document.getElementById('direccion').value = reg.direccion;
+      
+      // Marcar radio button correspondiente
+      cambiarEstatus(reg.estatus);
+      const radioBtn = document.querySelector(`input[name="estatus"][value="${reg.estatus}"]`);
+      if (radioBtn) radioBtn.checked = true;
+
+      document.getElementById('proveedorActual').value = reg.proveedorActual || 'Ninguno';
+
+      if (reg.prospecto) {
+        document.getElementById('nombreCliente').value = reg.prospecto.nombre;
+        document.getElementById('telefonoCliente').value = reg.prospecto.telefono;
+        document.getElementById('tipoPaquete').value = reg.prospecto.tipoPaquete;
+        document.getElementById('velocidadPaquete').value = reg.prospecto.velocidad;
+        actualizarCotizacion();
+      }
+
+      document.getElementById('modalOverlay').style.display = 'flex';
+    };
+
+    window.eliminarRegistro = function(id) {
+      if (confirm("¿Estás seguro de que deseas eliminar este pin?")) {
+        registros = registros.filter(r => r.id !== id);
+        if (markersMap[id]) {
+          map.removeLayer(markersMap[id]);
+          delete markersMap[id];
+        }
+        guardarEnLocalStorage();
+        actualizarContadores();
+      }
+    };
+
+    function renderizarRegistrosPrevios() {
+      registros.forEach(reg => dibujarPinEnMapa(reg));
+    }
+
+    function guardarEnLocalStorage() {
+      localStorage.setItem('registros_ventas', JSON.stringify(registros));
+    }
+
+    function actualizarContadores() {
+      document.getElementById('countTotal').textContent = registros.length;
+      const countPR = registros.filter(r => r.estatus === 'PR').length;
+      document.getElementById('countPR').textContent = countPR;
+    }
+
+    // --- EXPORTACIÓN A CSV ---
+    function exportarCSV() {
+      if (registros.length === 0) {
+        alert("No hay registros guardados para exportar.");
+        return;
+      }
+
+      let csv = "ID,Fecha,Latitud,Longitud,Direccion,Estatus,Proveedor_Actual,Nombre_Prospecto,Telefono,Paquete,Velocidad,Precio_Mensual,Inversion_Inicial\n";
+
+      registros.forEach(r => {
+        const p = r.prospecto || {};
+        csv += `"${r.id}","${r.fecha}","${r.lat}","${r.lng}","${r.direccion}","${r.estatus}","${r.proveedorActual}","${p.nombre || ''}","${p.telefono || ''}","${p.tipoPaquete || ''}","${p.velocidad || ''}","${p.precioMensual || ''}","${p.conceptoInicial || ''}"\n`;
+      });
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", `Prospectos_Ventas_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  </script>
+</body>
+</html>
